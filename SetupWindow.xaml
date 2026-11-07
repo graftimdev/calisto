@@ -1,0 +1,53 @@
+<Window x:Class="Calisto.SetupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Calisto"
+        Title="Calisto" Width="560" SizeToContent="Height"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize" Background="White"
+        FontFamily="Segoe UI" FontSize="13" Foreground="{StaticResource InkPrimary}">
+    <StackPanel Margin="32,28,32,24">
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+            <local:PlanetIcon Width="40" Height="40" Margin="0,0,14,0" VerticalAlignment="Center"/>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Calisto" FontSize="22" FontWeight="SemiBold"/>
+                <TextBlock Text="Explains the abbreviations on your screen" Foreground="{StaticResource InkSecondary}"/>
+            </StackPanel>
+        </StackPanel>
+
+        <TextBlock x:Name="Intro" TextWrapping="Wrap" Foreground="{StaticResource InkSecondary}" Margin="0,12,0,16"
+                   Text="Before Calisto starts, here is exactly what it needs permission for and why."/>
+
+        <Border Background="#F6F8FA" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+            <StackPanel>
+                <TextBlock FontWeight="SemiBold" Text="1. Read the text of the window on your screen"/>
+                <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{StaticResource InkSecondary}"
+                           Text="When you press Scan, Calisto uses Windows UI Automation (the same interface screen readers use) to read the visible text of the window you were working in and find words that look like abbreviations. It never takes screenshots, it reads only when you ask, and nothing is stored."/>
+            </StackPanel>
+        </Border>
+
+        <Border Background="#F6F8FA" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+            <StackPanel>
+                <TextBlock FontWeight="SemiBold" Text="2. Connect to the internet"/>
+                <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{StaticResource InkSecondary}"
+                           Text="Used to look up the abbreviations you click on in Wiktionary and Wikipedia (only the abbreviation itself is sent, in the language of the text around it) and to check for a newer version when you ask. If you add a Claude API key in Settings, the sentence around the abbreviation is also sent to the Claude API for a more precise answer. Nothing is sent otherwise."/>
+            </StackPanel>
+        </Border>
+
+        <Border Background="#F6F8FA" CornerRadius="8" Padding="16" Margin="0,0,0,20">
+            <StackPanel>
+                <TextBlock FontWeight="SemiBold" Text="What Calisto does not do"/>
+                <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{StaticResource InkSecondary}"
+                           Text="No screenshots, no keystroke logging, no background scanning, no data collection. Every scan is started by you, and only the abbreviation you click (plus its sentence, if you use a Claude API key) ever leaves your computer."/>
+            </StackPanel>
+        </Border>
+
+        <TextBlock x:Name="InstallNote" TextWrapping="Wrap" Foreground="{StaticResource InkSecondary}" Margin="0,0,0,14"
+                   Text="Installing copies Calisto to your user folder and adds it to the Start menu, so you can find it by typing its name. No administrator rights needed. You can remove it any time from Apps and features."/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="CancelBtn" Content="Cancel" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" Click="Cancel_Click"/>
+            <Button x:Name="PortableBtn" Content="Run without installing" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" Click="Portable_Click"/>
+            <Button x:Name="InstallBtn" Content="I agree, install Calisto" Style="{StaticResource PrimaryButton}" Click="Install_Click"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

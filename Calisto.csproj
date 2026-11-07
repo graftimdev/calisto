@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>Calisto</AssemblyName>
+    <RootNamespace>Calisto</RootNamespace>
+    <ApplicationIcon>calisto.ico</ApplicationIcon>
+    <!-- Version is overridden from the git tag by the release workflow (-p:Version=1.2.3). -->
+    <Version>1.0.0</Version>
+    <Product>Calisto</Product>
+    <AssemblyTitle>Calisto</AssemblyTitle>
+    <Company>Calisto</Company>
+    <Description>Calisto finds abbreviations on your screen and explains them in context.</Description>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Anthropic" Version="13.6.0" />
+    <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="calisto.png" />
+  </ItemGroup>
+
+</Project>

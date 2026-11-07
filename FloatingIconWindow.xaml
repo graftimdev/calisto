@@ -1,0 +1,14 @@
+<Window x:Class="Calisto.FloatingIconWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Calisto"
+        Title="Calisto" Width="44" Height="44"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ShowActivated="False" ResizeMode="NoResize"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown" MouseMove="Window_MouseMove" MouseLeftButtonUp="Window_MouseLeftButtonUp"
+        MouseRightButtonUp="Window_MouseRightButtonUp"
+        MouseEnter="Window_MouseEnter" MouseLeave="Window_MouseLeave">
+    <Grid Background="Transparent" Cursor="Hand" ToolTip="Calisto - left click: scan, right click: menu, drag to move">
+        <local:PlanetIcon x:Name="Planet" Width="36" Height="36"/>
+    </Grid>
+</Window>

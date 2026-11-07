@@ -1,0 +1,29 @@
+<Window x:Class="Calisto.ScanOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ShowActivated="False" ResizeMode="NoResize">
+    <Grid>
+        <!-- faint dim so the user sees the scan is running -->
+        <Rectangle Fill="#14141E1E"/>
+        <!-- radar rings expand from the Calisto icon; radii are animated in code -->
+        <Canvas>
+            <Path Stroke="#2ECC71" StrokeThickness="2" Fill="Transparent" x:Name="Ring1Path">
+                <Path.Data><EllipseGeometry x:Name="Ring1"/></Path.Data>
+            </Path>
+            <Path Stroke="#2ECC71" StrokeThickness="2" Fill="Transparent" x:Name="Ring2Path">
+                <Path.Data><EllipseGeometry x:Name="Ring2"/></Path.Data>
+            </Path>
+            <Path Stroke="#2ECC71" StrokeThickness="2" Fill="Transparent" x:Name="Ring3Path">
+                <Path.Data><EllipseGeometry x:Name="Ring3"/></Path.Data>
+            </Path>
+        </Canvas>
+        <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,60"
+                Background="#D91B1F23" CornerRadius="16" Padding="16,8">
+            <StackPanel Orientation="Horizontal">
+                <Ellipse x:Name="Pulse" Width="8" Height="8" Fill="#2ECC71" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock Text="Scanning for abbreviations" Foreground="White" FontFamily="Segoe UI" FontSize="13"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>
