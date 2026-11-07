@@ -31,6 +31,16 @@ public partial class App : Application
             return;
         }
 
+        // Diagnostic mode: "Calisto.exe --check-update" writes the update check result to %TEMP%\calisto-update.txt.
+        if (e.Args.Contains("--check-update"))
+        {
+            var r = Task.Run(() => UpdateChecker.CheckAsync(Settings.UpdateUrl)).GetAwaiter().GetResult();
+            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "calisto-update.txt"),
+                $"current={AppInfo.Current.ToString(3)} latest={r.LatestVersion} newer={r.IsNewer} download={r.DownloadUrl} error={r.Error}\n");
+            Shutdown();
+            return;
+        }
+
         if (e.Args.Contains("--uninstall"))
         {
             var answer = e.Args.Contains("--silent") ? MessageBoxResult.Yes

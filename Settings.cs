@@ -25,6 +25,8 @@ public sealed class Settings
             {
                 var s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new Settings();
                 s.Opacity = Math.Clamp(s.Opacity, 0.25, 1.0);
+                if (string.IsNullOrWhiteSpace(s.UpdateUrl) || s.UpdateUrl.Contains("/OWNER/"))
+                    s.UpdateUrl = AppInfo.DefaultUpdateUrl;   // settings saved by a pre-release build
                 return s;
             }
         }
