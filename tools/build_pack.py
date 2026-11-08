@@ -2,10 +2,12 @@
 
 Usage:  python tools/build_pack.py en pack-en.json
 
-It lists the members of Wiktionary's abbreviation categories, fetches their plain-text definitions in batches
-and keeps the "Initialism of X" / "Abbreviation of X" lines. One request per second, as Wikimedia asks.
+It lists the members of Wiktionary's abbreviation categories, fetches their wikitext 50 pages per request and keeps
+the definition lines ("# {{initialism of|en|...}}", "# {{abbreviation of|en|...}}", plain glosses). One request per
+second, as Wikimedia asks. Set CALISTO_PACK_LIMIT=200 to build a small sample for testing.
 """
 import json
+import os
 import re
 import sys
 import time
@@ -15,20 +17,20 @@ from datetime import date
 
 LANG = sys.argv[1] if len(sys.argv) > 1 else "en"
 OUT = sys.argv[2] if len(sys.argv) > 2 else f"pack-{LANG}.json"
-UA = "CalistoPackBuilder/1.0 (https://github.com/graftimdev/Calisto) python-urllib"
+LIMIT = int(os.environ.get("CALISTO_PACK_LIMIT", "0") or 0)
+UA = "CalistoPackBuilder/1.1 (https://github.com/graftimdev/Calisto) python-urllib"
 API = f"https://{LANG}.wiktionary.org/w/api.php"
 
 CATEGORIES = {
     "en": ["Category:English initialisms", "Category:English acronyms", "Category:English abbreviations", "Category:English clippings"],
     "ru": ["Категория:Аббревиатуры/ru", "Категория:Сокращения/ru"],
 }[LANG]
+SECTION_NAME = {"en": "English", "ru": "Русский"}[LANG]
 
-DEF_RE = re.compile(
-    r"(?:initialism|abbreviation|acronym|abbr\.?|short|clipping|contraction|сокращение|сокр\.?|аббревиатура)\s*(?:of|for|from|от)?\s*[:\-–—]?\s*(?P<x>[^.;\n(◆]{2,90})",
-    re.I)
-SKIP_SECTIONS = {"etymology", "pronunciation", "anagrams", "see also", "references", "synonyms", "antonyms", "translations",
-                 "derived terms", "related terms", "usage notes", "further reading", "hyponyms", "hypernyms", "quotations",
-                 "alternative forms", "coordinate terms", "произношение", "этимология", "перевод", "синонимы", "антонимы"}
+# "{{initialism of|en|X}}" style templates: the target is the first positional parameter after the language code.
+OF_TEMPLATES = ("initialism of", "init of", "abbreviation of", "abbr of", "abbrev of", "acronym of", "clipping of", "clip of",
+                "short for", "contraction of", "ellipsis of", "alternative form of", "alt form", "synonym of", "syn of", "alternative spelling of")
+DROP_TEMPLATES = ("lb", "lbl", "label", "cln", "c", "C", "topics", "top", "catlangname", "rfdef", "rfex", "senseid", "defdate", "anchor", "attn", "n-g", "non-gloss definition", "ngd")
 
 
 def get(params):
@@ -59,28 +61,68 @@ def members(category):
             break
 
 
-def definitions(extract):
-    section = ""
-    for raw in extract.split("\n"):
-        line = raw.strip()
-        if not line:
+def language_section(wikitext):
+    """The part of the page under the "== <language> ==" heading (whole page when there is no such heading)."""
+    m = re.search(r"^==\s*" + re.escape(SECTION_NAME) + r"\s*==\s*$", wikitext, re.M)
+    if not m:
+        return wikitext if LANG != "en" else ""
+    rest = wikitext[m.end():]
+    n = re.search(r"^==[^=].*?==\s*$", rest, re.M)
+    return rest[:n.start()] if n else rest
+
+
+def template_text(body):
+    """Renders one {{...}} template body (without the braces) as plain text, or "" to drop it."""
+    parts = [p for p in body.split("|")]
+    name = parts[0].strip()
+    if name in DROP_TEMPLATES:
+        return ""
+    positional = [p for p in parts[1:] if "=" not in p]
+    named = dict(p.split("=", 1) for p in parts[1:] if "=" in p)
+    if name in OF_TEMPLATES:
+        target = positional[1] if len(positional) > 1 else (positional[0] if positional else "")
+        gloss = named.get("t") or named.get("gloss") or (positional[3] if len(positional) > 3 else "")
+        return target + (f" ({gloss})" if gloss else "")
+    if name in ("l", "m", "link", "mention", "ll", "w", "W", "pedia", "wikipedia", "taxlink", "vern"):
+        if name in ("w", "W", "pedia", "wikipedia"):
+            return positional[0] if positional else ""
+        text = positional[2] if len(positional) > 2 and positional[2] else (positional[1] if len(positional) > 1 else "")
+        gloss = named.get("t") or named.get("gloss")
+        return text + (f" ({gloss})" if gloss else "")
+    if name in ("gloss", "gl", "qualifier", "q", "qual", "i", "sense"):
+        return "(" + ", ".join(positional) + ")" if positional else ""
+    if name in ("place",):
+        return positional[1].replace("/", " ") if len(positional) > 1 else ""
+    return positional[-1].strip() if positional else ""
+
+
+def plain(line):
+    """Turns one definition line of wikitext into plain text."""
+    # Links first: they may sit inside template parameters and contain "|" themselves.
+    line = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]", r"\1", line)
+    # Templates, innermost first.
+    for _ in range(6):
+        new = re.sub(r"\{\{([^{}]*)\}\}", lambda m: template_text(m.group(1)), line)
+        if new == line:
+            break
+        line = new
+    line = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]", r"\1", line)
+    line = re.sub(r"\b[wW]:", "", line)
+    line = re.sub(r"'{2,}", "", line)
+    line = re.sub(r"<ref[^>]*/>|<ref[^>]*>.*?</ref>|<[^>]+>", "", line)
+    line = re.sub(r"\s+", " ", line).strip(" :;,")
+    line = re.sub(r"\s+([,.;:)])", r"\1", line)
+    return line
+
+
+def definitions(wikitext):
+    section = language_section(wikitext)
+    for raw in section.split("\n"):
+        if not raw.startswith("# ") and not (raw.startswith("#") and len(raw) > 1 and raw[1] not in "#*:"):
             continue
-        if line.startswith("="):
-            name = line.strip("= ").lower()
-            if raw.count("=") > 4:  # level 3+
-                section = name
-            else:
-                section = ""
-            continue
-        if section in SKIP_SECTIONS or len(line) < 4 or len(line) > 240:
-            continue
-        if not (line[0].isalpha() or line[0].isdigit()):
-            continue
-        line = re.sub(r"^\(?\d+[.)]\s*", "", line)
-        line = re.split(r"\s*[◆◇□]", line)[0].strip()
-        m = DEF_RE.search(line)
-        if m:
-            yield m.group("x").strip().rstrip(".,")
+        text = plain(raw.lstrip("#").strip())
+        if 2 <= len(text) <= 240 and re.search(r"\w", text) and not text.lower().startswith(("see ", "used ")):
+            yield text[0].upper() + text[1:]
 
 
 def main():
@@ -92,22 +134,29 @@ def main():
             if t not in seen and 2 <= len(t) <= 12 and " " not in t:
                 seen.add(t)
                 titles.append(t)
+            if LIMIT and len(titles) >= LIMIT:
+                break
+        if LIMIT and len(titles) >= LIMIT:
+            break
     print(len(titles), "titles", file=sys.stderr)
 
     entries = {}
-    for i in range(0, len(titles), 20):
-        batch = titles[i:i + 20]
-        data = get({"action": "query", "prop": "extracts", "explaintext": 1, "titles": "|".join(batch)})
+    batch_size = 50
+    for i in range(0, len(titles), batch_size):
+        batch = titles[i:i + batch_size]
+        data = get({"action": "query", "prop": "revisions", "rvprop": "content", "rvslots": "main", "titles": "|".join(batch)})
         for page in data["query"]["pages"].values():
-            title, extract = page.get("title", ""), page.get("extract", "")
+            title = page.get("title", "")
+            revs = page.get("revisions") or []
+            wikitext = (revs[0].get("slots", {}).get("main", {}).get("*", "") if revs else "")
             defs = []
-            for d in definitions(extract):
-                d = d[0].upper() + d[1:]
-                if d.lower() != title.lower() and d not in defs:
+            for d in definitions(wikitext):
+                key = d.lower().rstrip(".")
+                if key != title.lower() and key not in {x.lower().rstrip(".") for x in defs}:
                     defs.append(d)
             if defs:
                 entries[title] = defs[:6]
-        if (i // 20) % 25 == 0:
+        if (i // batch_size) % 20 == 0:
             print(f"{i}/{len(titles)} -> {len(entries)} entries", file=sys.stderr)
 
     with open(OUT, "w", encoding="utf-8") as f:
