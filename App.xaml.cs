@@ -6,11 +6,24 @@ public partial class App : Application
 {
     public static Settings Settings { get; private set; } = new();
 
+    public static string CrashLogPath => System.IO.Path.Combine(Settings.Folder, "crash.log");
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         Settings = Settings.Load();
         OfflineStore.Load();
+
+        // Never die silently: log the error and keep the app running where possible.
+        DispatcherUnhandledException += (_, args) =>
+        {
+            LogCrash("UI thread", args.Exception);
+            args.Handled = true;
+            MessageBox.Show("Calisto hit an error and kept running. Details were written to:\n" + CrashLogPath + "\n\n" + args.Exception.Message,
+                "Calisto", MessageBoxButton.OK, MessageBoxImage.Warning);
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) => LogCrash("process", args.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, args) => { LogCrash("background task", args.Exception); args.SetObserved(); };
 
         // Diagnostic mode: "Calisto.exe --selftest notepad" scans that process's main window and writes the hits to %TEMP%.
         if (e.Args.Length >= 2 && e.Args[0] == "--selftest")
@@ -108,6 +121,17 @@ public partial class App : Application
 
         if (uiTest)
             _ = UiTest.RunAsync(icon, e.Args.Length >= 2 ? e.Args[1] : "notepad");
+    }
+
+    public static void LogCrash(string where, Exception? ex)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(Settings.Folder);
+            System.IO.File.AppendAllText(CrashLogPath,
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Calisto {AppInfo.Current.ToString(3)} {where}\n{ex}\n\n");
+        }
+        catch { }
     }
 
     private static void RunSelfTest(string processName)

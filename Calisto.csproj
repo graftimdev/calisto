@@ -9,6 +9,7 @@
     <AssemblyName>Calisto</AssemblyName>
     <RootNamespace>Calisto</RootNamespace>
     <ApplicationIcon>calisto.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Version is overridden from the git tag by the release workflow (-p:Version=1.2.3). -->
     <Version>1.0.0</Version>
     <Product>Calisto</Product>
@@ -16,7 +17,6 @@
     <Company>Calisto</Company>
     <Description>Calisto finds abbreviations on your screen and explains them in context.</Description>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup>

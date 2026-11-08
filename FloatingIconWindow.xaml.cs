@@ -28,8 +28,8 @@ public partial class FloatingIconWindow : Window
             _hotkeys.Pressed += () => _ = LookupSelectionAsync();
             ApplyHotkeyFromSettings();
         };
-        Loaded += (_, _) => { PositionInitial(); ApplyOpacity(); ApplyPassiveScan(); };
-        Closed += (_, _) => { _hotkeys?.Dispose(); _passive.Dispose(); };
+        Loaded += (_, _) => { PositionInitial(); ApplyOpacity(); MouseHook.Start(); ApplyPassiveScan(); };
+        Closed += (_, _) => { _hotkeys?.Dispose(); _passive.Dispose(); MouseHook.Stop(); };
     }
 
     public void ApplyOpacity()

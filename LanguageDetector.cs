@@ -76,11 +76,13 @@ public static class LanguageDetector
         }
 
         var words = Regex.Matches(text.ToLowerInvariant(), @"\p{L}+").Select(m => m.Value).ToHashSet();
-        string best = "en"; int bestHits = 0;
+        string best = "en"; int bestHits = LatinMarkers["en"].Count(words.Contains);
         foreach (var (lang, markers) in LatinMarkers)
         {
+            if (lang == "en") continue;
             int hits = markers.Count(words.Contains);
-            if (hits > bestHits) { bestHits = hits; best = lang; }
+            // Another language needs clear evidence (two marker words and more than English) before it beats the English default.
+            if (hits >= 2 && hits > bestHits) { bestHits = hits; best = lang; }
         }
         return best;
     }

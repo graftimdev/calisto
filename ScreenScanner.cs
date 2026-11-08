@@ -7,17 +7,17 @@ namespace Calisto;
 /// <summary>One abbreviation found on screen. ScreenRect is in physical screen pixels.</summary>
 public sealed record AbbreviationHit(string Abbreviation, string Context, Rect ScreenRect);
 
-/// <summary>Reads the text of a window through UI Automation and locates abbreviations.</summary>
+/// <summary>Reads the visible text of a window through UI Automation and locates abbreviations.</summary>
 public static class ScreenScanner
 {
     private const int MaxTextElements = 400;
     private const int MaxDistinctAbbreviations = 60;
+    private const int MaxOccurrencesPerAbbreviation = 25;
     private const int MaxHits = 250;
-    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(6);
 
-    public static List<AbbreviationHit> Scan(IntPtr hwnd)
+    public static List<AbbreviationHit> Scan(IntPtr hwnd, TimeSpan? budget = null)
     {
-        var deadline = DateTime.UtcNow + Budget;
+        var deadline = DateTime.UtcNow + (budget ?? TimeSpan.FromSeconds(6));
         var hits = new List<AbbreviationHit>();
         AutomationElement root;
         try { root = AutomationElement.FromHandle(hwnd); }
@@ -74,41 +74,51 @@ public static class ScreenScanner
     private static void ScanTextPattern(AutomationElement el, Rect bounds, List<AbbreviationHit> hits, DateTime deadline)
     {
         if (el.GetCurrentPattern(TextPattern.Pattern) is not TextPattern tp) return;
-        var doc = tp.DocumentRange;
-        string text = doc.GetText(200_000);
-        if (string.IsNullOrWhiteSpace(text)) return;
 
-        var candidates = AbbreviationDetector.FindDistinct(text).Take(MaxDistinctAbbreviations).ToList();
-        foreach (var abbr in candidates)
+        // Only what is on screen: far faster than the whole document, and the positions are what the user sees.
+        TextPatternRange[] ranges;
+        try { ranges = tp.GetVisibleRanges(); } catch { ranges = Array.Empty<TextPatternRange>(); }
+        if (ranges.Length == 0) ranges = new[] { tp.DocumentRange };
+
+        foreach (var range in ranges)
         {
             if (DateTime.UtcNow > deadline || hits.Count >= MaxHits) return;
-            var search = doc.Clone();
-            int searchFrom = 0;
-            for (int guard = 0; guard < 40; guard++)
+            string text;
+            try { text = range.GetText(100_000); } catch { continue; }
+            if (string.IsNullOrWhiteSpace(text)) continue;
+
+            var candidates = AbbreviationDetector.FindDistinct(text).Take(MaxDistinctAbbreviations).ToList();
+            foreach (var abbr in candidates)
             {
-                TextPatternRange? found;
-                try { found = search.FindText(abbr, false, false); } catch { break; }
-                if (found is null) break;
-
-                // Next iteration searches after this occurrence.
-                search.MoveEndpointByRange(TextPatternRangeEndpoint.Start, found, TextPatternRangeEndpoint.End);
-
-                // Reject partial matches inside longer words (e.g. "AI" inside "RAIN").
-                var word = found.Clone();
-                word.ExpandToEnclosingUnit(TextUnit.Word);
-                var wordText = word.GetText(64).Trim().Trim(AbbreviationDetector.Punctuation);
-                if (!string.Equals(wordText, abbr, StringComparison.Ordinal)) continue;
-
-                int idx = AbbreviationDetector.IndexOfWord(text, abbr, searchFrom);
-                if (idx >= 0) searchFrom = idx + abbr.Length;
-                string context = AbbreviationDetector.ContextAround(text, idx < 0 ? 0 : idx, abbr.Length);
-
-                foreach (var r in found.GetBoundingRectangles())
+                if (DateTime.UtcNow > deadline || hits.Count >= MaxHits) return;
+                var search = range.Clone();
+                int searchFrom = 0;
+                for (int guard = 0; guard < MaxOccurrencesPerAbbreviation; guard++)
                 {
-                    if (r.IsEmpty || r.Width <= 0 || r.Height <= 0 || r.Width > 600) continue;
-                    if (!bounds.IntersectsWith(r)) continue;
-                    hits.Add(new AbbreviationHit(abbr, context, r));
-                    break;
+                    TextPatternRange? found;
+                    try { found = search.FindText(abbr, false, false); } catch { break; }
+                    if (found is null) break;
+
+                    // Next iteration searches after this occurrence.
+                    search.MoveEndpointByRange(TextPatternRangeEndpoint.Start, found, TextPatternRangeEndpoint.End);
+
+                    // Reject partial matches inside longer words (e.g. "AI" inside "RAIN").
+                    var word = found.Clone();
+                    word.ExpandToEnclosingUnit(TextUnit.Word);
+                    var wordText = word.GetText(64).Trim().Trim(AbbreviationDetector.Punctuation);
+                    if (!string.Equals(wordText, abbr, StringComparison.Ordinal)) continue;
+
+                    int idx = AbbreviationDetector.IndexOfWord(text, abbr, searchFrom);
+                    if (idx >= 0) searchFrom = idx + abbr.Length;
+                    string context = AbbreviationDetector.ContextAround(text, idx < 0 ? 0 : idx, abbr.Length);
+
+                    foreach (var r in found.GetBoundingRectangles())
+                    {
+                        if (r.IsEmpty || r.Width <= 0 || r.Height <= 0 || r.Width > 600) continue;
+                        if (!bounds.IntersectsWith(r)) continue;
+                        hits.Add(new AbbreviationHit(abbr, context, r));
+                        break;
+                    }
                 }
             }
         }

@@ -28,6 +28,19 @@ public static class UiTest
             await Task.Delay(600);
             Capture("2-menu");
 
+            // Press every main-menu button through UI Automation, exactly like a mouse click would.
+            foreach (var name in new[] { "Settings", "Add API key", "Check for updates" })
+            {
+                icon.OpenMenuForTest();
+                await Task.Delay(400);
+                bool clicked = await Task.Run(() => ClickOwnButton("Calisto menu", name));
+                await Task.Delay(700);
+                log.Add($"clicked '{name}': {clicked}");
+                Capture($"3-after-{name.Replace(' ', '-')}");
+                // back to the main page
+                await Task.Run(() => ClickOwnButton("Calisto menu", "Back"));
+                await Task.Delay(300);
+            }
             icon.OpenSettingsForTest();
             await Task.Delay(600);
             Capture("3-settings");
@@ -48,6 +61,11 @@ public static class UiTest
                     DefinitionWindow.Show(h.Abbreviation, h.Context, h.ScreenRect);
                     await Task.Delay(4000);
                     Capture("5-definition");
+                    // Click outside the card (bottom-left of the target window): the card must close itself without errors.
+                    var b = NativeMethods.GetWindowBounds(proc.MainWindowHandle);
+                    ClickAt((int)(b.Left + 60), (int)(b.Bottom - 60));
+                    await Task.Delay(600);
+                    log.Add("card closed by outside click: " + (DefinitionWindowOpen() ? "no" : "yes"));
                     DefinitionWindow.CloseCurrent();
                 }
 
@@ -70,6 +88,42 @@ public static class UiTest
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hwnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+
+    private static void ClickAt(int x, int y)
+    {
+        SetCursorPos(x, y);
+        mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);   // left down
+        mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);   // left up
+    }
+
+    private static bool DefinitionWindowOpen() =>
+        Application.Current.Windows.OfType<DefinitionWindow>().Any(w => w.IsVisible);
+
+    /// <summary>Finds a button by its visible text (or tooltip) in one of Calisto's own windows and invokes it.</summary>
+    private static bool ClickOwnButton(string windowTitle, string buttonName)
+    {
+        try
+        {
+            var root = System.Windows.Automation.AutomationElement.RootElement;
+            var win = root.FindFirst(System.Windows.Automation.TreeScope.Children,
+                new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.NameProperty, windowTitle));
+            if (win is null) return false;
+            var buttons = win.FindAll(System.Windows.Automation.TreeScope.Descendants,
+                new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.ControlTypeProperty, System.Windows.Automation.ControlType.Button));
+            foreach (System.Windows.Automation.AutomationElement b in buttons)
+            {
+                var name = b.Current.Name ?? "";
+                var help = b.Current.HelpText ?? "";
+                if (!name.Contains(buttonName, StringComparison.OrdinalIgnoreCase) && !help.Contains(buttonName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (b.Current.IsOffscreen) continue;
+                if (b.GetCurrentPattern(System.Windows.Automation.InvokePattern.Pattern) is System.Windows.Automation.InvokePattern inv) { inv.Invoke(); return true; }
+            }
+            return false;
+        }
+        catch { return false; }
+    }
 
     private static bool SelectWord(IntPtr hwnd, string word)
     {

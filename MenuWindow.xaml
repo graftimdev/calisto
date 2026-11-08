@@ -71,7 +71,7 @@
             <!-- ============ Main page ============ -->
             <StackPanel x:Name="MainPage">
                 <TextBlock Style="{StaticResource Hint}" Margin="12,0,12,8" x:Name="HotkeyHint"/>
-                <Button Style="{StaticResource MenuRow}" Click="AddApi_Click">
+                <Button Style="{StaticResource MenuRow}" Click="AddApi_Click" AutomationProperties.Name="Add API key">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="Add API key" FontWeight="SemiBold"/>
                         <TextBlock x:Name="ApiState" Text="" Foreground="#88FFFFFF" Margin="8,0,0,0"/>

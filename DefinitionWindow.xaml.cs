@@ -1,23 +1,38 @@
 using System.Windows;
 using System.Windows.Input;
-using System.Windows.Media;
+using System.Windows.Interop;
 using System.Windows.Threading;
 
 namespace Calisto;
 
-/// <summary>Small card that shows one word and its definition next to where the word is on screen.</summary>
+/// <summary>Small card that shows one word and its definition next to where the word is on screen. Positioned in physical pixels.</summary>
 public partial class DefinitionWindow : Window
 {
     private static DefinitionWindow? _current;
     private readonly DispatcherTimer _watch = new() { Interval = TimeSpan.FromMilliseconds(150) };
     private bool _mouseWasDown;
+    private Rect? _anchorPx;
 
     private DefinitionWindow()
     {
         InitializeComponent();
         SourceInitialized += (_, _) => NativeMethods.AddExStyle(this, NativeMethods.WS_EX_TOOLWINDOW);
         _watch.Tick += (_, _) => CloseOnOutsideClick();
-        Closed += (_, _) => { _watch.Stop(); if (_current == this) _current = null; };
+        MouseHook.ButtonDown += OnGlobalButtonDown;
+        Closed += (_, _) => { _watch.Stop(); MouseHook.ButtonDown -= OnGlobalButtonDown; if (_current == this) _current = null; };
+    }
+
+    /// <summary>A click anywhere outside the card closes it (global hook, so even very quick clicks count).</summary>
+    private void OnGlobalButtonDown(Point screenPx)
+    {
+        if (!IsVisible) return;
+        try
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            var mine = NativeMethods.GetWindowBounds(hwnd);
+            if (!mine.Contains(screenPx)) Close();
+        }
+        catch { }
     }
 
     /// <summary>Shows the card for a word near a screen rectangle (physical pixels) or near the mouse, and looks the word up.</summary>
@@ -29,52 +44,12 @@ public partial class DefinitionWindow : Window
         w.Word.Text = word;
         w.Body.Text = "Looking up...";
         w.Source.Text = "";
+        w._anchorPx = anchorPx is { Width: > 0 } r ? r : null;
         w.Show();
-        w.PlaceNear(anchorPx);
+        w.Place();
         w._watch.Start();
         w.LookupAsync(word, context);
         return w;
-    }
-
-    private async void LookupAsync(string word, string context)
-    {
-        var result = await AbbreviationLookup.LookupAsync(word, context);
-        if (_current != this) return;
-        Body.Text = result.Text;
-        Source.Text = result.Source;
-        UpdateLayout();
-        KeepOnScreen();
-    }
-
-    private void PlaceNear(Rect? anchorPx)
-    {
-        UpdateLayout();
-        var src = PresentationSource.FromVisual(this);
-        var toDip = src?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
-        Point anchor;
-        double below = 8;
-        if (anchorPx is { } r && r.Width > 0)
-        {
-            anchor = toDip.Transform(new Point(r.Left, r.Bottom));
-        }
-        else
-        {
-            anchor = toDip.Transform(NativeMethods.CursorScreenPx());
-            below = 16;
-        }
-        Left = anchor.X;
-        Top = anchor.Y + below;
-        KeepOnScreen(anchorPx is { } rr ? toDip.Transform(new Point(rr.Left, rr.Top)).Y : (double?)null);
-    }
-
-    private void KeepOnScreen(double? anchorTopDip = null)
-    {
-        var area = SystemParameters.WorkArea;
-        double w = ActualWidth > 0 ? ActualWidth : Width, h = ActualHeight > 0 ? ActualHeight : 120;
-        if (Left + w > area.Right - 4) Left = Math.Max(area.Left + 4, area.Right - w - 4);
-        if (Left < area.Left + 4) Left = area.Left + 4;
-        if (Top + h > area.Bottom - 4)
-            Top = anchorTopDip is double at ? Math.Max(area.Top + 4, at - h - 8) : Math.Max(area.Top + 4, area.Bottom - h - 4);
     }
 
     /// <summary>Shows a short hint instead of a definition (for example when nothing was selected). Closes by itself.</summary>
@@ -86,23 +61,73 @@ public partial class DefinitionWindow : Window
         w.Word.Text = "Calisto";
         w.Body.Text = text;
         w.Show();
-        w.PlaceNear(null);
+        w.Place();
         w._watch.Start();
         var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.5) };
         t.Tick += (_, _) => { t.Stop(); if (_current == w) w.Close(); };
         t.Start();
     }
 
+    private async void LookupAsync(string word, string context)
+    {
+        try
+        {
+            var result = await AbbreviationLookup.LookupAsync(word, context);
+            if (_current != this) return;
+            Body.Text = result.Text;
+            Source.Text = result.Source;
+            Place();
+        }
+        catch (Exception ex)
+        {
+            if (_current != this) return;
+            Body.Text = "Lookup failed: " + ex.Message;
+        }
+    }
+
+    /// <summary>Puts the card just below the anchor (or the mouse), keeping it inside that monitor's work area.</summary>
+    private void Place()
+    {
+        UpdateLayout();
+        var hwnd = new WindowInteropHelper(this).Handle;
+        Point anchorTopLeft, anchorBottomLeft;
+        if (_anchorPx is { } a) { anchorTopLeft = a.TopLeft; anchorBottomLeft = a.BottomLeft; }
+        else
+        {
+            var m = NativeMethods.CursorScreenPx();
+            anchorTopLeft = new Point(m.X, m.Y - 8);
+            anchorBottomLeft = new Point(m.X, m.Y + 16);
+        }
+
+        var (_, work) = NativeMethods.MonitorBoundsAt(anchorBottomLeft);
+        double scale = NativeMethods.ScaleOf(hwnd);
+        double w = Math.Max(ActualWidth, Width) * scale;
+        double h = Math.Max(ActualHeight, 60) * scale;
+
+        double x = anchorBottomLeft.X;
+        double y = anchorBottomLeft.Y + 6;
+        if (x + w > work.Right - 4) x = Math.Max(work.Left + 4, work.Right - w - 4);
+        if (x < work.Left + 4) x = work.Left + 4;
+        if (y + h > work.Bottom - 4)
+        {
+            y = anchorTopLeft.Y - h - 6;                      // above the word instead
+            if (y < work.Top + 4) y = Math.Max(work.Top + 4, work.Bottom - h - 4);
+        }
+        NativeMethods.MoveWindowPx(this, new Rect(x, y, w, h), show: true);
+    }
+
     /// <summary>Closes when the user clicks anywhere outside the card.</summary>
     private void CloseOnOutsideClick()
     {
-        bool down = NativeMethods.IsKeyDown(NativeMethods.VK_LBUTTON) || NativeMethods.IsKeyDown(NativeMethods.VK_RBUTTON);
+        // Fallback when the hook is unavailable: also honour "was pressed since last poll" (bit 0) so quick clicks are not missed.
+        bool down = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_LBUTTON) & 0x8001) != 0 || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_RBUTTON) & 0x8001) != 0;
         if (down && !_mouseWasDown)
         {
             try
             {
-                var p = PointFromScreen(NativeMethods.CursorScreenPx());   // takes physical screen pixels
-                if (p.X < 0 || p.Y < 0 || p.X > ActualWidth || p.Y > ActualHeight) Close();
+                var hwnd = new WindowInteropHelper(this).Handle;
+                var mine = NativeMethods.GetWindowBounds(hwnd);
+                if (!mine.Contains(NativeMethods.CursorScreenPx())) Close();
             }
             catch { }
         }

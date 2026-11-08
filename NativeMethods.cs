@@ -39,6 +39,63 @@ internal static class NativeMethods
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hwnd, int id);
     [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extraInfo);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hwnd, StringBuilder sb, int max);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO info);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+    public static readonly IntPtr HWND_TOPMOST = new(-1);
+    public const uint SWP_NOACTIVATE = 0x0010, SWP_NOZORDER = 0x0004, SWP_SHOWWINDOW = 0x0040, SWP_NOSIZE = 0x0001;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    /// <summary>Physical-pixel bounds (full monitor and work area) of the monitor that holds a window.</summary>
+    public static (Rect Monitor, Rect Work) MonitorBoundsOf(IntPtr hwnd)
+    {
+        var mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        return MonitorBounds(mon);
+    }
+
+    public static (Rect Monitor, Rect Work) MonitorBoundsAt(Point px)
+    {
+        var mon = MonitorFromPoint(new POINT { X = (int)px.X, Y = (int)px.Y }, MONITOR_DEFAULTTONEAREST);
+        return MonitorBounds(mon);
+    }
+
+    private static (Rect Monitor, Rect Work) MonitorBounds(IntPtr mon)
+    {
+        var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        if (mon != IntPtr.Zero && GetMonitorInfo(mon, ref info))
+            return (ToRect(info.rcMonitor), ToRect(info.rcWork));
+        var all = new Rect(GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79));
+        return (all, all);
+    }
+
+    private static Rect ToRect(RECT r) => new(r.Left, r.Top, Math.Max(1, r.Right - r.Left), Math.Max(1, r.Bottom - r.Top));
+
+    /// <summary>Scale factor (1.0 at 96 dpi) of the monitor a window is currently on.</summary>
+    public static double ScaleOf(IntPtr hwnd)
+    {
+        try { var dpi = GetDpiForWindow(hwnd); return dpi > 0 ? dpi / 96.0 : 1.0; }
+        catch { return 1.0; }
+    }
+
+    /// <summary>Moves and sizes a window in physical pixels, bypassing WPF's DIP conversion.</summary>
+    public static void MoveWindowPx(Window window, Rect px, bool show)
+    {
+        var hwnd = new WindowInteropHelper(window).EnsureHandle();
+        SetWindowPos(hwnd, HWND_TOPMOST, (int)px.X, (int)px.Y, (int)Math.Ceiling(px.Width), (int)Math.Ceiling(px.Height),
+            SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : 0));
+    }
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")] private static extern IntPtr GetWindowLongPtr64(IntPtr hwnd, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")] private static extern IntPtr SetWindowLongPtr64(IntPtr hwnd, int index, IntPtr value);
 
