@@ -49,6 +49,8 @@ public static class UiTest
             // Passive scan needs the target in front; bring it forward and give the scanner a few ticks.
             if (proc is not null)
             {
+                App.Settings.PassiveScan = true;
+                icon.ApplyPassiveScan();
                 SetForegroundWindow(proc.MainWindowHandle);
                 await Task.Delay(3500);
                 Capture("4-passive-tags");
@@ -57,9 +59,15 @@ public static class UiTest
                 log.Add($"passive scan hits: {hits.Count}: {string.Join(" ", hits.Select(h => h.Abbreviation))}");
                 if (hits.Count > 0)
                 {
+                    // Click the first def tag with the real mouse, exactly as a user does (tag sits above the end of the word).
                     var h = hits[0];
-                    DefinitionWindow.Show(h.Abbreviation, h.Context, h.ScreenRect);
-                    await Task.Delay(4000);
+                    double scale = NativeMethods.ScaleOf(new System.Windows.Interop.WindowInteropHelper(icon).Handle);
+                    ClickAt((int)(h.ScreenRect.Right + 8 * scale), (int)(h.ScreenRect.Top - 1.5 * scale));
+                    await Task.Delay(1200);
+                    log.Add("card open 1.2 s after clicking the def tag: " + (DefinitionWindowOpen() ? "yes" : "NO"));
+                    if (!DefinitionWindowOpen()) DefinitionWindow.Show(h.Abbreviation, h.Context, h.ScreenRect);
+                    await Task.Delay(3000);
+                    log.Add("card still open after lookup: " + (DefinitionWindowOpen() ? "yes" : "NO"));
                     Capture("5-definition");
                     // Click outside the card (bottom-left of the target window): the card must close itself without errors.
                     var b = NativeMethods.GetWindowBounds(proc.MainWindowHandle);
@@ -72,11 +80,18 @@ public static class UiTest
                 // Word lookup: select the word "Spain" in the target through UI Automation, then run the hotkey handler.
                 SetForegroundWindow(proc.MainWindowHandle);
                 await Task.Delay(300);
+                // A real click first (users select words with the mouse); this used to make the card close itself at once.
+                var tb = NativeMethods.GetWindowBounds(proc.MainWindowHandle);
+                ClickAt((int)(tb.Left + 200), (int)(tb.Bottom - 40));
+                await Task.Delay(300);
                 bool selected = await Task.Run(() => SelectWord(proc.MainWindowHandle, "Spain"));
                 log.Add("selected word: " + selected);
                 await Task.Delay(300);
                 await icon.LookupSelectionForTest();
-                await Task.Delay(3000);
+                await Task.Delay(1000);
+                log.Add("word card open after 1 s: " + (DefinitionWindowOpen() ? "yes" : "NO"));
+                await Task.Delay(2500);
+                log.Add("word card open after lookup: " + (DefinitionWindowOpen() ? "yes" : "NO"));
                 Capture("6-word-lookup");
                 DefinitionWindow.CloseCurrent();
             }

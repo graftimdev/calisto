@@ -17,7 +17,7 @@ The first screen explains what Calisto needs permission for and offers **Install
 ## How to use it
 
 - **Select a word** in any app and press **Ctrl+Alt+C**. A small card appears next to the word with its meaning in context. Works for ordinary words, names, abbreviations and chat shorthand, in any language. Click anywhere or press Esc to dismiss the card.
-- **Passive scan** (on by default) quietly marks every abbreviation in the window you are working in with a tiny green **def** tag, placed above the end of the word so it never covers the text. Click a tag to see the meaning.
+- **Passive scan** (off by default; turn it on in Settings) quietly marks every abbreviation in the window you are working in with a tiny green **def** tag, placed above the end of the word so it never covers the text. Click a tag to see the meaning.
 - The **Calisto moon** floats at the right edge of your screen. Drag it anywhere. Click it for the menu: Add API key, Settings, Check for updates, Close Calisto. The menu can be dragged by its header.
 - **Settings**: opacity of the moon and menu, passive scan on or off, the language definitions should be in (Auto picks it from the text), the lookup hotkey (click the box and press the combination you want; unusable combinations are refused with an explanation), the offline dictionary download, and **Contribute a definition**.
 

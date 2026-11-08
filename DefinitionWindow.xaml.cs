@@ -12,6 +12,10 @@ public partial class DefinitionWindow : Window
     private readonly DispatcherTimer _watch = new() { Interval = TimeSpan.FromMilliseconds(150) };
     private bool _mouseWasDown;
     private Rect? _anchorPx;
+    private DateTime _shownAt;
+
+    /// <summary>The click or key press that opened the card must never count as a click outside it.</summary>
+    private bool InGracePeriod => (DateTime.UtcNow - _shownAt).TotalMilliseconds < 350;
 
     private DefinitionWindow()
     {
@@ -25,7 +29,7 @@ public partial class DefinitionWindow : Window
     /// <summary>A click anywhere outside the card closes it (global hook, so even very quick clicks count).</summary>
     private void OnGlobalButtonDown(Point screenPx)
     {
-        if (!IsVisible) return;
+        if (!IsVisible || InGracePeriod) return;
         try
         {
             var hwnd = new WindowInteropHelper(this).Handle;
@@ -47,7 +51,7 @@ public partial class DefinitionWindow : Window
         w._anchorPx = anchorPx is { Width: > 0 } r ? r : null;
         w.Show();
         w.Place();
-        w._watch.Start();
+        w.StartWatching();
         w.LookupAsync(word, context);
         return w;
     }
@@ -62,7 +66,7 @@ public partial class DefinitionWindow : Window
         w.Body.Text = text;
         w.Show();
         w.Place();
-        w._watch.Start();
+        w.StartWatching();
         var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.5) };
         t.Tick += (_, _) => { t.Stop(); if (_current == w) w.Close(); };
         t.Start();
@@ -116,11 +120,21 @@ public partial class DefinitionWindow : Window
         NativeMethods.MoveWindowPx(this, new Rect(x, y, w, h), show: true);
     }
 
-    /// <summary>Closes when the user clicks anywhere outside the card.</summary>
+    private void StartWatching()
+    {
+        _shownAt = DateTime.UtcNow;
+        // Seed with the current state so a button still held from the click that opened the card is not seen as a new press.
+        _mouseWasDown = NativeMethods.IsKeyDown(NativeMethods.VK_LBUTTON) || NativeMethods.IsKeyDown(NativeMethods.VK_RBUTTON);
+        _watch.Start();
+    }
+
+    /// <summary>Fallback when the hook is unavailable: closes when the user clicks anywhere outside the card.</summary>
     private void CloseOnOutsideClick()
     {
-        // Fallback when the hook is unavailable: also honour "was pressed since last poll" (bit 0) so quick clicks are not missed.
-        bool down = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_LBUTTON) & 0x8001) != 0 || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_RBUTTON) & 0x8001) != 0;
+        // GetAsyncKeyState bit 0 means "pressed since the last call", so quick clicks between polls are not missed.
+        // During the grace period the calls only clear that bit (it was set by the click that opened the card).
+        bool down = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_LBUTTON) & 0x8001) != 0 | (NativeMethods.GetAsyncKeyState(NativeMethods.VK_RBUTTON) & 0x8001) != 0;
+        if (InGracePeriod) { _mouseWasDown = true; return; }
         if (down && !_mouseWasDown)
         {
             try

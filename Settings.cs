@@ -15,7 +15,7 @@ public sealed class Settings
     public double? IconTop { get; set; }
 
     /// <summary>Quietly scan the active window and tag abbreviations with a "def" button.</summary>
-    public bool PassiveScan { get; set; } = true;
+    public bool PassiveScan { get; set; } = false;
     /// <summary>"auto" or a Wikipedia language code ("en", "ru", ...). Definitions come only from that language when set.</summary>
     public string Language { get; set; } = "auto";
     /// <summary>Global hotkey that looks up the selected word, e.g. "Ctrl+Alt+C".</summary>
