@@ -122,7 +122,7 @@ public static class ScreenScanner
         var rect = el.Current.BoundingRectangle;
         if (rect.IsEmpty || rect.Width <= 0 || !bounds.IntersectsWith(rect)) return;
 
-        foreach (var abbr in AbbreviationDetector.FindDistinct(name).Take(5))
+        foreach (var abbr in AbbreviationDetector.FindDistinct(name, strict: true).Take(5))
         {
             int idx = name.IndexOf(abbr, StringComparison.Ordinal);
             string context = AbbreviationDetector.ContextAround(name, idx, abbr.Length);

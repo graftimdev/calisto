@@ -8,7 +8,7 @@
         MouseLeftButtonDown="Window_MouseLeftButtonDown" MouseMove="Window_MouseMove" MouseLeftButtonUp="Window_MouseLeftButtonUp"
         MouseRightButtonUp="Window_MouseRightButtonUp"
         MouseEnter="Window_MouseEnter" MouseLeave="Window_MouseLeave">
-    <Grid Background="Transparent" Cursor="Hand" ToolTip="Calisto - left click: scan, right click: menu, drag to move">
+    <Grid Background="Transparent" Cursor="Hand" ToolTip="Calisto - click for menu, drag to move">
         <local:PlanetIcon x:Name="Planet" Width="36" Height="36"/>
     </Grid>
 </Window>

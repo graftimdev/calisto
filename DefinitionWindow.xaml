@@ -1,0 +1,18 @@
+<Window x:Class="Calisto.DefinitionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Calisto definition" Width="340" SizeToContent="Height"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ShowActivated="False" ResizeMode="NoResize"
+        FontFamily="Segoe UI" FontSize="13" KeyDown="Window_KeyDown">
+    <Border Background="#F21B1F23" CornerRadius="10" Padding="14,10" BorderBrush="#2ECC71" BorderThickness="1" MouseLeftButtonDown="Header_MouseLeftButtonDown">
+        <StackPanel>
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="&#x2715;" Click="Close_Click" Style="{StaticResource MenuRow}" Padding="6,0" FontSize="11" Foreground="#AAFFFFFF" VerticalAlignment="Top"/>
+                <TextBlock x:Name="Word" FontSize="15" FontWeight="Bold" Foreground="#2ECC71" TextWrapping="Wrap"/>
+            </DockPanel>
+            <TextBlock x:Name="Body" Foreground="White" TextWrapping="Wrap" Margin="0,4,0,0"/>
+            <TextBlock x:Name="Source" Foreground="#99FFFFFF" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+    </Border>
+</Window>

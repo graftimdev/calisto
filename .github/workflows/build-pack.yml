@@ -1,0 +1,30 @@
+name: Build offline pack
+
+# Run by hand from the Actions tab. Builds pack-en.json from Wiktionary (about 20 minutes, polite rate) and attaches
+# it to the latest release, where the app's "Download offline dictionary" button looks for it.
+on:
+  workflow_dispatch:
+    inputs:
+      lang:
+        description: "Language code"
+        default: "en"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build pack
+        run: python tools/build_pack.py ${{ github.event.inputs.lang }} pack-${{ github.event.inputs.lang }}.json
+      - name: Attach to latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --json tagName --jq .tagName)
+          gh release upload "$tag" pack-${{ github.event.inputs.lang }}.json --clobber

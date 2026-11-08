@@ -8,97 +8,130 @@ namespace Calisto;
 public sealed record LookupResult(string Text, string Source);
 
 /// <summary>
-/// Explains an abbreviation using the text around it. Works without any key: candidates come from the built-in
-/// dictionary, Wiktionary and Wikipedia (in the language of the context), and are ranked by fit to the context.
-/// With a Claude API key the same candidates are handed to Claude for a more precise answer.
+/// Explains a word or abbreviation using the text around it. Works without any key: candidates come from the built-in
+/// dictionary, offline packs, community contributions, Wiktionary and Wikipedia (in the language of the context or the
+/// language the user picked), and are ranked by fit to the context. With a Claude API key the same candidates are handed
+/// to Claude for a more precise answer. Results are cached on disk so they work offline next time.
 /// </summary>
 public static class AbbreviationLookup
 {
     private static readonly ConcurrentDictionary<string, LookupResult> Cache = new();
 
+    /// <summary>Ranked candidates of the most recent lookup (diagnostics only).</summary>
+    public static List<Ranker.Scored> LastRanked { get; private set; } = new();
+
     private const string SystemPrompt =
-        "You explain abbreviations, acronyms and slang shorthand that a reader found on their screen, in any language. " +
-        "You receive the abbreviation, the surrounding text, and candidate meanings found in dictionaries. " +
-        "Reply in the language of the surrounding text, plain text, no markdown. " +
-        "Line 1: the single most likely expansion for THIS context. " +
+        "You explain words, abbreviations, acronyms and slang that a reader selected on their screen, in any language. " +
+        "You receive the term, the surrounding text, and candidate meanings found in dictionaries. " +
+        "Reply in {LANG}, plain text, no markdown. " +
+        "Line 1: the single most likely meaning for THIS context (for an abbreviation, its expansion). " +
         "Line 2: one short sentence explaining what it means here. " +
-        "If another expansion is also plausible here, add a final line starting with 'Also: ' listing at most two alternatives. " +
-        "If the token is not really an abbreviation (a product name or a plain word), say so in one sentence.";
+        "If another meaning is also plausible here, add a final line starting with 'Also: ' listing at most two alternatives. " +
+        "If the term is not a real word (a typo or a product name), say so in one sentence.";
 
     public static bool IsKnown(string token) =>
         Dictionary.ContainsKey(token) || Slang.Contains(token);
 
-    public static async Task<LookupResult> LookupAsync(string abbr, string context)
+    public static async Task<LookupResult> LookupAsync(string term, string context)
     {
-        string key = abbr + "\u0001" + context;
+        term = term.Trim();
+        context ??= term;
+        var forced = App.Settings.Language is { } l && l != "auto" ? l : null;
+        var textLang = forced ?? LanguageDetector.Detect(context.Length > term.Length ? context : term);
+        string key = textLang + "\u0001" + term + "\u0001" + context;
         if (Cache.TryGetValue(key, out var cached)) return cached;
 
-        var lang = LanguageDetector.Detect(context);
-        var candidates = new List<Candidate>();
-        foreach (var m in DictionaryMeanings(abbr))
-            candidates.Add(new Candidate(m, m, "Built-in dictionary", "en"));
+        var mode = DecideMode(term, context);
+        IReadOnlyList<string> langs = forced is not null ? new[] { forced } : (textLang == "en" ? new[] { "en" } : new[] { textLang, "en" });
 
+        var candidates = new List<Candidate>();
+        if (mode == LookupMode.Abbreviation)
+            foreach (var m in DictionaryMeanings(term))
+                candidates.Add(new Candidate(m, m, "Built-in dictionary", "en"));
+        candidates.AddRange(OfflineStore.Candidates(term));
+
+        bool online = false;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         try
         {
-            candidates.AddRange(await OnlineSources.FetchAsync(abbr, lang, cts.Token));
-            // Give the strongest candidates a description so the context can be compared against them.
-        // (Dictionary glosses equal their expansion, so they are the ones that get enriched.)
-            var prelim = Ranker.Rank(abbr, context, lang, candidates).Take(6).Select(r => r.Candidate).ToList();
-            var enriched = await OnlineSources.EnrichAsync(prelim, lang, cts.Token);
-            candidates = enriched.Concat(candidates.Where(c => !prelim.Contains(c))).ToList();
+            var fetched = await OnlineSources.FetchAsync(term, langs, mode, textLang, cts.Token);
+            online = fetched.Count > 0 || !OnlineSources.RateLimited;
+            candidates.AddRange(fetched);
+            if (mode == LookupMode.Abbreviation)
+            {
+                // Give the strongest candidates a description so the context can be compared against them.
+                var prelim = Ranker.Rank(term, context, textLang, candidates, mode, forced).Take(6).Select(r => r.Candidate).ToList();
+                var enriched = await OnlineSources.EnrichAsync(prelim, langs, cts.Token);
+                candidates = enriched.Concat(candidates.Where(c => !prelim.Contains(c))).ToList();
+            }
         }
-        catch { /* offline: dictionary only */ }
+        catch { /* offline: dictionary, packs and cache only */ }
 
-        var ranked = Ranker.Rank(abbr, context, lang, candidates);
+        var ranked = Ranker.Rank(term, context, textLang, candidates, mode, forced);
+        LastRanked = ranked;
 
         LookupResult result;
         var apiKey = App.Settings.ApiKey;
-        if (!string.IsNullOrWhiteSpace(apiKey))
+        if (!string.IsNullOrWhiteSpace(apiKey) && online)
         {
-            try { result = await AskClaudeAsync(apiKey, abbr, context, ranked); }
+            try { result = await AskClaudeAsync(apiKey, term, context, ranked, textLang); }
             catch (Exception ex)
             {
-                var local = Compose(ranked);
+                var local = Compose(ranked, mode);
                 result = new LookupResult(local?.Text ?? "No definition found.",
                     (local?.Source ?? "") + " (Claude lookup failed: " + Shorten(ex.Message) + ")");
             }
         }
         else
         {
-            result = Compose(ranked) ?? new LookupResult(
-                OnlineSources.RateLimited ? "The online dictionaries are busy right now. Try again in a minute."
-                : !IsOnlineLikely() ? "No definition found. You seem to be offline; only the built-in dictionary is available."
-                : "No definition found for this abbreviation.",
-                "Dictionary, Wiktionary and Wikipedia");
+            result = Compose(ranked, mode)
+                     ?? OfflineStore.Cached(term, textLang)
+                     ?? new LookupResult(
+                         OnlineSources.RateLimited ? "The online dictionaries are busy right now. Try again in a minute."
+                         : !IsOnlineLikely() ? "No definition found. You seem to be offline; only saved and downloaded dictionaries are available."
+                         : forced is not null ? $"No {LanguageDetector.DisplayName(forced)} definition found for this term."
+                         : "No definition found for this term.",
+                         "Dictionary, Wiktionary and Wikipedia");
         }
 
         Cache[key] = result;
+        if (ranked.Count > 0) OfflineStore.Remember(term, textLang, result);
         return result;
+    }
+
+    /// <summary>Abbreviation when the term looks like one (or is in the dictionary); otherwise an ordinary word or phrase.</summary>
+    private static LookupMode DecideMode(string term, string context)
+    {
+        if (term.Contains(' ')) return LookupMode.Word;
+        if (IsKnown(term)) return LookupMode.Abbreviation;
+        int idx = Math.Max(0, context.IndexOf(term, StringComparison.Ordinal));
+        return AbbreviationDetector.LooksLikeAbbreviation(term, context, idx, strict: false) ? LookupMode.Abbreviation : LookupMode.Word;
     }
 
     private static bool IsOnlineLikely() => System.Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable();
 
-    /// <summary>Builds the answer text from the ranked candidates: best expansion, its gloss, then alternatives.</summary>
-    private static LookupResult? Compose(List<Ranker.Scored> ranked)
+    /// <summary>Builds the answer text from the ranked candidates: best meaning, its gloss, then alternatives.</summary>
+    private static LookupResult? Compose(List<Ranker.Scored> ranked, LookupMode mode)
     {
         if (ranked.Count == 0) return null;
         var best = ranked[0];
         var text = best.Candidate.Expansion;
         var gloss = System.Text.RegularExpressions.Regex.Split(best.Candidate.Gloss, @"\s*[◆◇□]").FirstOrDefault()?.Trim() ?? "";
-        if (!gloss.Equals(best.Candidate.Expansion, StringComparison.OrdinalIgnoreCase) && gloss.Length > 0)
+        if (gloss.Length > 0 && !gloss.Contains(best.Candidate.Expansion.TrimEnd('.'), StringComparison.OrdinalIgnoreCase))
             text += "\n" + (gloss.Length > 220 ? gloss[..220] + "..." : gloss);
 
+        double minFit = mode == LookupMode.Abbreviation ? 5 : 3;
         var alts = ranked.Skip(1)
-            .Where(r => r.Fit >= 5 && r.Score >= best.Score - 8)
+            .Where(r => r.Fit >= minFit && r.Score >= best.Score - 8)
             .Select(r => r.Candidate.Expansion)
+            .Select(a => a.Length > 70 ? a[..70].TrimEnd() + "..." : a)
             .Take(2).ToList();
         if (alts.Count > 0) text += "\nAlso: " + string.Join("; ", alts);
 
         return new LookupResult(text, best.Candidate.Source);
     }
 
-    private static async Task<LookupResult> AskClaudeAsync(string apiKey, string abbr, string context, List<Ranker.Scored> ranked)
+    private static async Task<LookupResult> AskClaudeAsync(string apiKey, string term, string context, List<Ranker.Scored> ranked, string lang)
     {
         var hints = string.Join("\n", ranked.Take(8).Select(r => $"- {r.Candidate.Expansion} ({r.Candidate.Source})"));
         var client = new AnthropicClient { ApiKey = apiKey };
@@ -106,23 +139,23 @@ public static class AbbreviationLookup
         {
             Model = "claude-opus-5-5",
             MaxTokens = 400,
-            System = SystemPrompt,
+            System = SystemPrompt.Replace("{LANG}", LanguageDetector.DisplayName(lang) is var n && n != lang ? n : "the language of the surrounding text"),
             OutputConfig = new OutputConfig { Effort = Effort.Low },
             Messages =
             [
                 new UserMessageParam
                 {
-                    Content = $"Abbreviation: {abbr}\nSurrounding text: \"{context}\"\nCandidate meanings found:\n{(hints.Length > 0 ? hints : "(none)")}"
+                    Content = $"Term: {term}\nSurrounding text: \"{context}\"\nCandidate meanings found:\n{(hints.Length > 0 ? hints : "(none)")}"
                 }
             ]
         });
 
         if (response.StopReason == "refusal")
-            return Compose(ranked) ?? new LookupResult("The lookup service declined this request.", "Claude");
+            return Compose(ranked, LookupMode.Abbreviation) ?? new LookupResult("The lookup service declined this request.", "Claude");
 
         var text = string.Concat(response.Content.Select(b => b.Value).OfType<AnthropicTextBlock>().Select(t => t.Text)).Trim();
         if (string.IsNullOrWhiteSpace(text))
-            return Compose(ranked) ?? new LookupResult("No definition found.", "Claude");
+            return Compose(ranked, LookupMode.Abbreviation) ?? new LookupResult("No definition found.", "Claude");
         return new LookupResult(text, "Claude, using the surrounding text");
     }
 

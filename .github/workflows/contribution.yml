@@ -1,0 +1,62 @@
+name: Contribution
+
+# When someone opens an issue from the app's "Contribute definition" button, this adds the entry to contributions.json,
+# thanks them and closes the issue. The app downloads that file once a day.
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  add:
+    if: startsWith(github.event.issue.title, '[Contribution]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse and append
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = context.payload.issue.body || '';
+            const get = (k) => { const m = body.match(new RegExp('^' + k + ':\\s*(.+)$', 'mi')); return m ? m[1].trim() : ''; };
+            const word = get('Word'), definition = get('Definition'), language = (get('Language') || 'en').toLowerCase().slice(0, 5);
+            const bad = ['nigger','faggot','retard','kill yourself','heil hitler','хохол','жид','пидор','сдохни'];
+            const text = (word + ' ' + definition).toLowerCase();
+            const problems = [];
+            if (!word || word.length > 40 || !/\p{L}/u.test(word)) problems.push('word missing or too long');
+            if (definition.length < 3 || definition.length > 300) problems.push('definition missing or too long');
+            if (/https?:\/\/|www\./i.test(text)) problems.push('links are not accepted');
+            if (bad.some(b => text.includes(b))) problems.push('inappropriate wording');
+            if (/(.)\1{6,}/.test(definition)) problems.push('definition does not look real');
+            if (problems.length) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number,
+                body: 'Thanks, but this contribution could not be added automatically: ' + problems.join('; ') + '. A maintainer may still add it by hand.' });
+              core.setOutput('added', 'false');
+              return;
+            }
+            const file = 'contributions.json';
+            const list = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const dup = list.find(e => e.word.toLowerCase() === word.toLowerCase() && e.definition.toLowerCase() === definition.toLowerCase());
+            if (!dup) {
+              list.push({ word, definition, language, by: context.payload.issue.user.login, date: new Date().toISOString().slice(0, 10) });
+              fs.writeFileSync(file, JSON.stringify(list, null, 2) + '\n');
+            }
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number,
+              body: dup ? 'This definition is already in the shared dictionary. Thanks!' : `Added **${word}** to the shared dictionary. Thank you! Calisto picks it up within a day.` });
+            await github.rest.issues.update({ ...context.repo, issue_number: context.issue.number, state: 'closed' });
+            core.setOutput('added', dup ? 'false' : 'true');
+
+      - name: Commit
+        if: steps.parse.outputs.added == 'true'
+        run: |
+          git config user.name "calisto-bot"
+          git config user.email "calisto-bot@users.noreply.github.com"
+          git add contributions.json
+          git commit -m "Add contribution from #${{ github.event.issue.number }}"
+          git push

@@ -1,47 +1,31 @@
-using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 
 namespace Calisto;
 
-/// <summary>One row in the results list; expands to show the meaning when clicked.</summary>
-public sealed class ResultItem : INotifyPropertyChanged
-{
-    public AbbreviationHit Hit { get; }
-    private string _meaning = "";
-    private string _source = "";
-    private bool _expanded;
-
-    public ResultItem(AbbreviationHit hit) => Hit = hit;
-
-    public string Abbreviation => Hit.Abbreviation;
-    public string Meaning { get => _meaning; set { _meaning = value; Changed(nameof(Meaning)); } }
-    public string Source { get => _source; set { _source = value; Changed(nameof(Source)); } }
-    public bool Expanded { get => _expanded; set { _expanded = value; Changed(nameof(Expanded)); Changed(nameof(DetailVisibility)); Changed(nameof(Chevron)); } }
-    public Visibility DetailVisibility => Expanded ? Visibility.Visible : Visibility.Collapsed;
-    /// <summary>Small triangle: points right when closed, down when open.</summary>
-    public string Chevron => Expanded ? "▼" : "▶";
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-    private void Changed(string n) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
-}
-
-/// <summary>The draggable, translucent menu that opens from the floating planet.</summary>
+/// <summary>The draggable, translucent menu that opens from the floating planet. Pages: main, settings, API key, contribute.</summary>
 public partial class MenuWindow : Window
 {
     private readonly FloatingIconWindow _owner;
-    public event Func<Task>? ScanRequested;
     private bool _placedByUser;
+    private bool _loading;
+    private CancellationTokenSource? _packCts;
 
     public MenuWindow(FloatingIconWindow owner)
     {
         InitializeComponent();
         _owner = owner;
+        _loading = true;
         OpacitySlider.Value = App.Settings.Opacity;
+        PassiveToggle.IsChecked = App.Settings.PassiveScan;
+        LanguageBox.ItemsSource = LanguageDetector.Choices.Select(c => new { c.Code, c.Name }).ToList();
+        LanguageBox.SelectedValue = LanguageDetector.Choices.Any(c => c.Code == App.Settings.Language) ? App.Settings.Language : "auto";
+        _loading = false;
         SourceInitialized += (_, _) => NativeMethods.AddExStyle(this, NativeMethods.WS_EX_TOOLWINDOW);
         Closing += (_, e) => { e.Cancel = true; Hide(); };   // never destroy; the icon reuses it
         ApplyOpacity();
+        RefreshState();
     }
 
     public void ApplyOpacity()
@@ -50,13 +34,26 @@ public partial class MenuWindow : Window
         OpacityLabel.Text = $"{Math.Round(App.Settings.Opacity * 100)}%";
     }
 
+    private void RefreshState()
+    {
+        ApiState.Text = string.IsNullOrWhiteSpace(App.Settings.ApiKey) ? "" : "(saved)";
+        RemoveApiBtn.Visibility = string.IsNullOrWhiteSpace(App.Settings.ApiKey) ? Visibility.Collapsed : Visibility.Visible;
+        HotkeyHint.Text = $"Select a word anywhere and press {App.Settings.Hotkey} to see its meaning.";
+        HotkeyBox.Text = App.Settings.Hotkey;
+        var lang = App.Settings.Language == "auto" ? "en" : App.Settings.Language;
+        PackState.Text = OfflineStore.HasPack(lang)
+            ? $"{LanguageDetector.DisplayName(lang)}: {OfflineStore.PackEntryCount(lang):N0} entries saved for offline use."
+            : $"Works offline with words you already looked up ({OfflineStore.CachedCount}). Download the English pack for more.";
+        PackBtn.Content = OfflineStore.HasPack(lang) ? "Remove" : "Download";
+    }
+
     /// <summary>Opens the menu beside the icon (unless the user dragged it somewhere else this session).</summary>
     public void ShowNextTo(FloatingIconWindow icon)
     {
         Message.Visibility = Visibility.Collapsed;
+        RefreshState();
         if (!_placedByUser)
         {
-            // Measure first so the panel can be kept on screen.
             Show();
             UpdateLayout();
             var area = SystemParameters.WorkArea;
@@ -70,27 +67,6 @@ public partial class MenuWindow : Window
         Activate();
     }
 
-    public void ShowResults(List<AbbreviationHit> hits, string windowTitle)
-    {
-        MainMenu.Visibility = Visibility.Collapsed;
-        Results.Visibility = Visibility.Visible;
-        var title = string.IsNullOrWhiteSpace(windowTitle) ? "that window" : $"\"{Shorten(windowTitle, 40)}\"";
-        if (hits.Count == 0)
-        {
-            ResultsTitle.Text = "No abbreviations found";
-            ResultsSubtitle.Text = $"Nothing that looks like an abbreviation in {title}. Some apps do not expose their text to Windows.";
-        }
-        else
-        {
-            ResultsTitle.Text = $"{hits.Count} abbreviation{(hits.Count == 1 ? "" : "s")} found";
-            ResultsSubtitle.Text = $"In {title}. Click one to see what it means.";
-        }
-        ResultList.ItemsSource = hits
-            .GroupBy(h => h.Abbreviation)
-            .Select(g => new ResultItem(g.First()))
-            .ToList();
-    }
-
     public void ShowMessage(string text)
     {
         Message.Text = text;
@@ -98,7 +74,34 @@ public partial class MenuWindow : Window
         if (!IsVisible) ShowNextTo(_owner);
     }
 
-    private static string Shorten(string s, int n) => s.Length <= n ? s : s[..n] + "...";
+    private void ShowPage(StackPanel page, string title)
+    {
+        foreach (var p in new[] { MainPage, SettingsPage, ApiPage, ContributePage })
+            p.Visibility = p == page ? Visibility.Visible : Visibility.Collapsed;
+        BackBtn.Visibility = page == MainPage ? Visibility.Collapsed : Visibility.Visible;
+        Title.Text = title;
+        Message.Visibility = Visibility.Collapsed;
+        RefreshState();
+        UpdateLayout();
+        KeepOnScreen();
+    }
+
+    private void KeepOnScreen()
+    {
+        var area = SystemParameters.WorkArea;
+        if (Top + ActualHeight > area.Bottom - 4) Top = Math.Max(area.Top + 4, area.Bottom - ActualHeight - 4);
+    }
+
+    public void ShowSettingsForTest() => ShowPage(SettingsPage, "Settings");
+
+    // ---- navigation ----
+    private void Back_Click(object sender, RoutedEventArgs e) => ShowPage(MainPage, "Calisto");
+    private void Settings_Click(object sender, RoutedEventArgs e) => ShowPage(SettingsPage, "Settings");
+    private void AddApi_Click(object sender, RoutedEventArgs e) { ApiKeyBox.Password = App.Settings.ApiKey; ApiError.Visibility = Visibility.Collapsed; ShowPage(ApiPage, "Claude API key"); ApiKeyBox.Focus(); }
+    private void Contribute_Click(object sender, RoutedEventArgs e) { ContribError.Visibility = Visibility.Collapsed; ContribOk.Visibility = Visibility.Collapsed; ShowPage(ContributePage, "Contribute"); ContribWord.Focus(); }
+    private void Close_Click(object sender, RoutedEventArgs e) => Hide();
+    private void Window_KeyDown(object sender, KeyEventArgs e) { if (e.Key == Key.Escape && !HotkeyBox.IsKeyboardFocused) Hide(); }
+    private void Exit_Click(object sender, RoutedEventArgs e) => _owner.ExitApp();
 
     private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
@@ -106,43 +109,135 @@ public partial class MenuWindow : Window
         try { DragMove(); _placedByUser = true; } catch { }
     }
 
-    private async void Scan_Click(object sender, RoutedEventArgs e)
+    // ---- API key ----
+    private void SaveApi_Click(object sender, RoutedEventArgs e)
     {
-        if (ScanRequested is { } handler) await handler();
+        var key = ApiKeyBox.Password.Trim();
+        if (key.Length > 0 && !key.StartsWith("sk-ant-", StringComparison.Ordinal))
+        {
+            ApiError.Text = "That does not look like a Claude API key (they start with sk-ant-).";
+            ApiError.Visibility = Visibility.Visible;
+            return;
+        }
+        App.Settings.ApiKey = key;
+        App.Settings.Save();
+        ShowPage(MainPage, "Calisto");
+        ShowMessage(key.Length > 0 ? "API key saved. Lookups now use Claude as well." : "API key removed.");
     }
 
-    private async void Result_Click(object sender, RoutedEventArgs e)
+    private void RemoveApi_Click(object sender, RoutedEventArgs e)
     {
-        if ((sender as Button)?.Tag is not ResultItem item) return;
-        if (item.Expanded) { item.Expanded = false; return; }
-        item.Expanded = true;
-        if (!string.IsNullOrEmpty(item.Meaning)) return;
-        item.Meaning = "Looking up...";
-        var result = await AbbreviationLookup.LookupAsync(item.Hit.Abbreviation, item.Hit.Context);
-        item.Meaning = result.Text;
-        item.Source = result.Source;
+        App.Settings.ApiKey = "";
+        App.Settings.Save();
+        ShowPage(MainPage, "Calisto");
+        ShowMessage("API key removed.");
     }
 
-    public void SetSliderForTest(double o) => OpacitySlider.Value = o;
-
-    public int ResultCount => (ResultList.ItemsSource as List<ResultItem>)?.Count ?? 0;
-
-    public async Task ExpandFirstForTest()
+    // ---- settings ----
+    private void OpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (ResultList.ItemsSource is not List<ResultItem> { Count: > 0 } items) return;
-        var item = items[0];
-        item.Expanded = true;
-        var result = await AbbreviationLookup.LookupAsync(item.Hit.Abbreviation, item.Hit.Context);
-        item.Meaning = result.Text;
-        item.Source = result.Source;
+        if (_loading || !IsLoaded) return;
+        App.Settings.Opacity = Math.Round(e.NewValue, 2);
+        App.Settings.Save();
+        _owner.ApplyOpacity();
+        ApplyOpacity();
     }
 
-    private void Back_Click(object sender, RoutedEventArgs e)
+    private void PassiveToggle_Click(object sender, RoutedEventArgs e)
     {
-        Results.Visibility = Visibility.Collapsed;
-        MainMenu.Visibility = Visibility.Visible;
+        App.Settings.PassiveScan = PassiveToggle.IsChecked == true;
+        App.Settings.Save();
+        _owner.ApplyPassiveScan();
     }
 
+    private void LanguageBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || LanguageBox.SelectedValue is not string code) return;
+        App.Settings.Language = code;
+        App.Settings.Save();
+        RefreshState();
+    }
+
+    private void HotkeyBox_GotFocus(object sender, KeyboardFocusChangedEventArgs e) { HotkeyBox.Text = "Press the keys..."; HotkeyError.Visibility = Visibility.Collapsed; }
+    private void HotkeyBox_LostFocus(object sender, KeyboardFocusChangedEventArgs e) { HotkeyBox.Text = App.Settings.Hotkey; }
+
+    private void HotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        e.Handled = true;
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key == Key.Escape) { Keyboard.ClearFocus(); return; }
+        var mods = Keyboard.Modifiers;
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+        {
+            HotkeyBox.Text = new Hotkey(mods, Key.None).ToString().Replace("+None", "+...");
+            return;
+        }
+        var problem = Hotkey.Problem(mods, key);
+        var candidate = new Hotkey(mods, key);
+        if (problem is null && !_owner.TryApplyHotkey(candidate))
+            problem = $"{candidate} can't be used: Windows or another app already owns it.";
+        if (problem is not null)
+        {
+            HotkeyError.Text = problem;
+            HotkeyError.Visibility = Visibility.Visible;
+            HotkeyBox.Text = candidate.ToString();
+            return;
+        }
+        HotkeyError.Visibility = Visibility.Collapsed;
+        App.Settings.Hotkey = candidate.ToString();
+        App.Settings.Save();
+        HotkeyBox.Text = candidate.ToString();
+        Keyboard.ClearFocus();
+        RefreshState();
+    }
+
+    private async void Pack_Click(object sender, RoutedEventArgs e)
+    {
+        var lang = App.Settings.Language == "auto" ? "en" : App.Settings.Language;
+        if (OfflineStore.HasPack(lang))
+        {
+            OfflineStore.DeletePack(lang);
+            RefreshState();
+            return;
+        }
+        if (_packCts is not null) { _packCts.Cancel(); return; }
+        _packCts = new CancellationTokenSource();
+        PackBtn.Content = "Cancel";
+        PackProgress.Visibility = Visibility.Visible;
+        PackProgress.Value = 0;
+        var progress = new Progress<double>(p => PackProgress.Value = p * 100);
+        var error = await OfflineStore.DownloadPackAsync(lang, progress, _packCts.Token);
+        _packCts = null;
+        PackProgress.Visibility = Visibility.Collapsed;
+        RefreshState();
+        if (error is not null) ShowMessage(error);
+    }
+
+    // ---- contribute ----
+    private void SubmitContribution_Click(object sender, RoutedEventArgs e)
+    {
+        var problem = Contribution.Validate(ContribWord.Text, ContribDef.Text);
+        if (problem is not null)
+        {
+            ContribError.Text = problem;
+            ContribError.Visibility = Visibility.Visible;
+            ContribOk.Visibility = Visibility.Collapsed;
+            return;
+        }
+        ContribError.Visibility = Visibility.Collapsed;
+        var lang = App.Settings.Language != "auto" ? App.Settings.Language : LanguageDetector.Detect(ContribWord.Text + " " + ContribDef.Text);
+        var url = Contribution.IssueUrl(ContribWord.Text, ContribDef.Text, lang);
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+            ContribOk.Text = "A GitHub page opened with your entry filled in. Press \"Submit new issue\" there and it joins the shared dictionary.";
+            ContribOk.Visibility = Visibility.Visible;
+            ContribWord.Text = ""; ContribDef.Text = "";
+        }
+        catch (Exception ex) { ContribError.Text = "Could not open the browser: " + ex.Message; ContribError.Visibility = Visibility.Visible; }
+    }
+
+    // ---- updates ----
     private async void Update_Click(object sender, RoutedEventArgs e)
     {
         Message.Text = "Checking for updates...";
@@ -157,19 +252,5 @@ public partial class MenuWindow : Window
             if (open == MessageBoxResult.Yes)
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(result.DownloadUrl) { UseShellExecute = true });
         }
-    }
-
-    private void Settings_Click(object sender, RoutedEventArgs e) => new SettingsWindow { Owner = this }.ShowDialog();
-    private void Exit_Click(object sender, RoutedEventArgs e) => _owner.ExitApp();
-    private void Close_Click(object sender, RoutedEventArgs e) => Hide();
-    private void Window_KeyDown(object sender, KeyEventArgs e) { if (e.Key == Key.Escape) Hide(); }
-
-    private void OpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (!IsLoaded) return;
-        App.Settings.Opacity = Math.Round(e.NewValue, 2);
-        App.Settings.Save();
-        _owner.ApplyOpacity();
-        ApplyOpacity();
     }
 }

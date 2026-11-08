@@ -10,6 +10,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
         Settings = Settings.Load();
+        OfflineStore.Load();
 
         // Diagnostic mode: "Calisto.exe --selftest notepad" scans that process's main window and writes the hits to %TEMP%.
         if (e.Args.Length >= 2 && e.Args[0] == "--selftest")
@@ -26,7 +27,8 @@ public partial class App : Application
             var sw = System.Diagnostics.Stopwatch.StartNew();
             // Run on the thread pool: blocking the UI thread on an await would deadlock the WPF dispatcher.
             var r = Task.Run(() => AbbreviationLookup.LookupAsync(e.Args[1], e.Args[2])).GetAwaiter().GetResult();
-            System.IO.File.WriteAllText(outPath, $"[{e.Args[1]}] lang={LanguageDetector.Detect(e.Args[2])} {sw.ElapsedMilliseconds} ms\n{r.Text}\n-- {r.Source}\n");
+            var ranked = string.Join("\n", AbbreviationLookup.LastRanked.Take(8).Select(x => $"   {x.Score,5:F1} fit {x.Fit,4:F1}  {Truncate(x.Candidate.Expansion, 60)}  [{x.Candidate.Source}]"));
+            System.IO.File.WriteAllText(outPath, $"[{e.Args[1]}] lang={LanguageDetector.Detect(e.Args[2])} {sw.ElapsedMilliseconds} ms\n{r.Text}\n-- {r.Source}\n{ranked}\n");
             Shutdown();
             return;
         }
@@ -102,9 +104,10 @@ public partial class App : Application
 
         var icon = new FloatingIconWindow();
         icon.Show();
+        _ = OfflineStore.SyncContributionsAsync();
 
-        if (e.Args.Length >= 2 && e.Args[0] == "--uitest")
-            _ = UiTest.RunAsync(icon, e.Args[1]);
+        if (uiTest)
+            _ = UiTest.RunAsync(icon, e.Args.Length >= 2 ? e.Args[1] : "notepad");
     }
 
     private static void RunSelfTest(string processName)

@@ -33,9 +33,20 @@ jobs:
           -p:Version=${{ steps.ver.outputs.version }}
           -o publish
 
+      - name: Carry the offline packs over from the previous release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p packs
+          gh release download --pattern "pack-*.json" --dir packs || echo "no packs yet"
+          ls packs || true
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           name: Calisto ${{ steps.ver.outputs.version }}
-          files: publish/Calisto.exe
+          files: |
+            publish/Calisto.exe
+            packs/pack-*.json
           generate_release_notes: true
